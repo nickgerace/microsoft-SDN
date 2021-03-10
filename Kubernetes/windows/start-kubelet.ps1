@@ -24,7 +24,7 @@ function
 Update-CNIConfig($podCIDR)
 {
     $jsonSampleConfig = '{
-  "cniVersion": "0.2.0",
+  "cniVersion": "0.3.1",
   "name": "<NetworkMode>",
   "type": "wincni.exe",
   "master": "Ethernet",

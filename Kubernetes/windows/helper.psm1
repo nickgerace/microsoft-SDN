@@ -22,7 +22,7 @@ function DownloadAndExtractTarGz($url, $dstPath)
     $tmpTarGz = New-TemporaryFile | Rename-Item -NewName { $_ -replace 'tmp$', 'tar.gz' } -PassThru
     $tmpTar = New-TemporaryFile | Rename-Item -NewName { $_ -replace 'tmp$', 'tar' } -PassThru
 
-    Invoke-WebRequest $url -o $tmpTarGz.FullName
+    curl.exe $url -o $tmpTarGz.FullName
     Expand-GZip $tmpTarGz.FullName $tmpTar.FullName
     Expand-7Zip $tmpTar.FullName $dstPath
     Remove-Item $tmpTarGz.FullName,$tmpTar.FullName
@@ -31,7 +31,7 @@ function DownloadAndExtractTarGz($url, $dstPath)
 function DownloadAndExtractZip($url, $dstPath)
 {
     $tmpZip = New-TemporaryFile | Rename-Item -NewName { $_ -replace 'tmp$', 'zip' } -PassThru
-    Invoke-WebRequest $url -o $tmpZip.FullName
+    curl.exe $url -o $tmpZip.FullName
     Expand-Archive $tmpZip.FullName $dstPath
     Remove-Item $tmpZip.FullName
 }

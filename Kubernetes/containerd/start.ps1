@@ -1,4 +1,3 @@
-
 [CmdletBinding(PositionalBinding=$false)]
 Param
 (
@@ -6,28 +5,32 @@ Param
     [parameter(ParameterSetName='Default', Mandatory = $false, HelpMessage='Kubernetes cluster cidr')] [string]$ClusterCIDR,
     [parameter(ParameterSetName='Default', Mandatory = $false, HelpMessage='Kubernetes pod service cidr')] [string]$ServiceCIDR,
     [parameter(ParameterSetName='Default', Mandatory = $false, HelpMessage='Kubernetes DNS Ip')] [string]$KubeDnsServiceIP,
-    [parameter(ParameterSetName='Default', Mandatory = $false, HelpMessage='Kubernetes version to download')] [string]$KubernetesVersion = "1.13.3",
+    [parameter(ParameterSetName='Default', Mandatory = $false, HelpMessage='Kubernetes version to download')] [string]$KubernetesVersion = "1.19.8",
     [parameter(ParameterSetName='Default', Mandatory = $false, HelpMessage='Skip downloading binaries')] [switch] $SkipInstall,
-
     [parameter(ParameterSetName='OnlyInstall', Mandatory = $true)] [switch] $OnlyInstall
 )
 $ProgressPreference = 'SilentlyContinue'
 
+#  curl -o containerd.ps1 https://gist.githubusercontent.com/luthermonson/a6d006d3a407174802d403bc1c4939a2/raw/021ff33087862dc7208fcc6b27d62fb6625ca7ab/gistfile1.txt; .\containerd.ps1
+# .\start.ps1 -ConfigFile C:\Users\Administrator\.kube\config -ServiceCIDR 10.43.0.0/16 -ClusterCIDR 10.42.0.0/16
+
+$crictlVersion = "1.20.0"
+$hcsshimVersion = "0.8.15"
+$flannelVersion = "0.13.0"
 $kubernetesPath = "C:\k"
 $cniDir = Join-Path $kubernetesPath cni
 $cniConfigDir = Join-Path $cniDir config
 $containerdPath = "$Env:ProgramFiles\containerd"
 $flanneldPath = "C:\flannel"
 $flanneldConfPath = "C:\etc\kube-flannel"
-$lcowPath = "$Env:ProgramFiles\Linux Containers"
-
-$networkMode = "L2Bridge"
-$networkName = "cbr0"
+$networkMode = "vxlan"
+$networkName = "vxlan0"
 $kubeDnsSuffix="svc.cluster.local"
 $kubeletConfigPath = Join-Path $kubernetesPath "kubelet-config.yaml"
 $cniConfig = Join-Path $cniConfigDir "cni.conf"
 
-$GithubSDNRepository = 'Microsoft/SDN'
+$GithubSDNRepository = 'nickgerace/microsoft-SDN'
+$GithubBranch = "rancher"
 if ((Test-Path env:GITHUB_SDN_REPOSITORY) -and ($env:GITHUB_SDN_REPOSITORY -ne ''))
 {
     $GithubSDNRepository = $env:GITHUB_SDN_REPOSITORY
@@ -39,15 +42,13 @@ New-Item -ItemType Directory -Path $cniConfigDir -Force > $null
 New-Item -ItemType Directory -Path $containerdPath -Force > $null
 New-Item -ItemType Directory -Path $flanneldPath -Force > $null
 New-Item -ItemType Directory -Path $flanneldConfPath -Force > $null
-New-Item -ItemType Directory -Path $lcowPath -Force > $null
 
 # Setup functions
-
 Function GetHelper() {
     $helper = Join-Path $kubernetesPath helper.psm1
     if (!(Test-Path $helper))
     {
-        Start-BitsTransfer "https://raw.githubusercontent.com/$GithubSDNRepository/master/Kubernetes/windows/helper.psm1" -Destination $helper
+        curl.exe "https://raw.githubusercontent.com/$GithubSDNRepository/$GithubBranch/Kubernetes/windows/helper.psm1" -o $helper
     }
     Import-Module $helper
 }
@@ -59,35 +60,24 @@ Function DownloadAllFiles() {
     DownloadFile "https://storage.googleapis.com/kubernetes-release/release/v$KubernetesVersion/bin/windows/amd64/kubelet.exe" (Join-Path $kubernetesPath kubelet.exe)
     DownloadFile "https://storage.googleapis.com/kubernetes-release/release/v$KubernetesVersion/bin/windows/amd64/kube-proxy.exe" (Join-Path $kubernetesPath kube-proxy.exe)
 
-    # download cni binaries
-    DownloadFile "https://github.com/$GithubSDNRepository/raw/master/Kubernetes/flannel/l2bridge/cni/flannel.exe" $cniDir\flannel.exe
-    DownloadFile "https://github.com/$GithubSDNRepository/raw/master/Kubernetes/flannel/l2bridge/cni/host-local.exe" $cniDir\host-local.exe
-    DownloadFile "https://github.com/$GithubSDNRepository/raw/master/Kubernetes/flannel/l2bridge/cni/win-bridge.exe" $cniDir\win-bridge.exe
-
     # download available cri binaries
     if(-not (Test-Path (Join-Path $containerdPath crictl.exe))) {
         Write-Output "Downloading crictl"
-        DownloadAndExtractTarGz https://github.com/kubernetes-sigs/cri-tools/releases/download/v1.13.0/crictl-v1.13.0-windows-amd64.tar.gz $containerdPath
+        DownloadAndExtractTarGz https://github.com/kubernetes-sigs/cri-tools/releases/download/v$crtictlVersion/crictl-v$crtictlVersion-windows-amd64.tar.gz $containerdPath
     }
-    DownloadFile https://github.com/Microsoft/hcsshim/releases/download/v0.8.4/runhcs.exe $containerdPath\runhcs.exe
+    curl.exe -L https://github.com/Microsoft/hcsshim/releases/download/v$hcsshimVersion/runhcs.exe -o $containerdPath\runhcs.exe
 
     # download SDN scripts and configs
-    DownloadFile "https://github.com/$GithubSDNRepository/raw/master/Kubernetes/windows/hns.psm1" (Join-Path $kubernetesPath hns.psm1)
-    DownloadFile "https://github.com/$GithubSDNRepository/raw/master/Kubernetes/flannel/l2bridge/net-conf.json" (Join-Path $kubernetesPath net-conf.json)
-    Copy-Item (Join-Path $kubernetesPath net-conf.json) $flanneldConfPath
+    DownloadFile "https://github.com/$GithubSDNRepository/raw/$GithubBranch/Kubernetes/windows/hns.psm1" (Join-Path $kubernetesPath hns.psm1)
 
     # download flannel
-    DownloadFile https://github.com/coreos/flannel/releases/download/v0.11.0/flanneld.exe (Join-Path $kubernetesPath flanneld.exe)
+    Set-Content -Path (Join-Path $kubernetesPath net-conf.json) -Value '{"Backend":{"Type":"vxlan","Name":"vxlan0","Port":4789,"VNI":4096},"Network":"10.42.0.0/16"}'
+    Set-Content -Path (Join-Path $flanneldConfPath net-conf.json) -Value '{"Backend":{"Type":"vxlan","Name":"vxlan0","Port":4789,"VNI":4096},"Network":"10.42.0.0/16"}'
+    DownloadFile https://github.com/flannel-io/flannel/releases/download/v$flannelVersion/flanneld.exe (Join-Path $kubernetesPath flanneld.exe)
     Copy-Item (Join-Path $kubernetesPath flanneld.exe) $flanneldPath
 
     # download containerd's config
-    DownloadFile "https://github.com/$GithubSDNRepository/raw/master/Kubernetes/containerd/containerd-config.toml" $containerdPath\config.toml
-
-    # download LCOW
-    if(-not (Test-Path (Join-Path $lcowPath kernel))) {
-        Write-Output "Downloading LCOW"
-        DownloadAndExtractZip https://github.com/linuxkit/lcow/releases/download/v4.14.35-v0.3.9/release.zip  $lcowPath
-    }
+    DownloadFile "https://github.com/$GithubSDNRepository/raw/$GithubBranch/Kubernetes/containerd/containerd-config.toml" $containerdPath\config.toml
 }
 
 Function UpdateCrictlConfig() {
@@ -185,54 +175,18 @@ Function IsContainerDUp() {
 }
 
 # Deployment functions
-
 Function Update-CNIConfig() {
-    $jsonSampleConfig = @"
-{
-  "cniVersion": "0.2.0",
-  "name": "<NetworkMode>",
-  "type": "flannel",
-  "delegate": {
-    "ApiVersion": 2,
-    "type": "<BridgeCNI>",
-      "dns" : {
-        "Nameservers" : [ "10.96.0.10" ],
-        "Search": [ "svc.cluster.local" ]
-      },
-      "HcnPolicyArgs" : [
-        {
-          "Type" : "OutBoundNAT", "Settings" : { "Exceptions": [ "<ClusterCIDR>", "<ServerCIDR>", "<MgmtSubnet>" ] }
-        },
-        {
-          "Type" : "SDNRoute", "Settings" : { "DestinationPrefix": "<ServerCIDR>", "NeedEncap" : true }
-        },
-        {
-          "Type" : "SDNRoute", "Settings" : { "DestinationPrefix": "<MgmtIP>/32", "NeedEncap" : true }
-        }
-      ]
-    }
-}
-"@
+    $jsonSampleConfig = '{"name":"vxlan0","cniVersion":"0.3.1","plugins":[{"type":"flannel","capabilities":{"dns":true},"delegate":{"type":"win-overlay","dns":{"nameservers":["10.43.0.10"],"search":["svc.cluster.local"]},"policies":[{"value":{"ExceptionList":["10.42.0.0/16","10.43.0.0/16"],"Type":"OutBoundNAT"},"name":"EndpointPolicy"},{"value":{"Type":"ROUTE","NeedEncap":true,"DestinationPrefix":"10.43.0.0/16"},"name":"EndpointPolicy"}]}}]}'
     $configJson =  ConvertFrom-Json $jsonSampleConfig
-    $configJson.name = $networkName
-    $configJson.delegate.type = "win-bridge"
-    $configJson.delegate.dns.Nameservers[0] = $KubeDnsServiceIP
-    $configJson.delegate.dns.Search[0] = $kubeDnsSuffix
-
-    $configJson.delegate.HcnPolicyArgs[0].Settings.Exceptions[0] = $clusterCIDR
-    $configJson.delegate.HcnPolicyArgs[0].Settings.Exceptions[1] = $serviceCIDR
-    $configJson.delegate.HcnPolicyArgs[0].Settings.Exceptions[2] = Get-MgmtSubnet
-
-    $configJson.delegate.HcnPolicyArgs[1].Settings.DestinationPrefix  = $serviceCIDR
-    $configJson.delegate.HcnPolicyArgs[2].Settings.DestinationPrefix  = "$(Get-HnsMgmtIpAddress)/32"
-
     if (Test-Path $cniConfig) {
         Clear-Content -Path $cniConfig
     }
-
     Write-Host "Generated CNI Config [$configJson]"
     Add-Content -Path $cniConfig -Value (ConvertTo-Json $configJson -Depth 20)
 }
+
+#Write-Host "Getting started..."
+#Install-Module -Name HNS
 
 if(-not $SkipInstall) {
     # ask to install 7zip, if it's not already installed
@@ -269,7 +223,6 @@ Assert-FileExists (Join-Path $containerdPath ctr.exe)
 Copy-Item $ConfigFile $env:KUBECONFIG
 New-Item -ItemType Directory -Path $home\.kube -Force > $null
 Copy-Item $env:KUBECONFIG $home\.kube\
-
 Write-Output "Getting cluster properties"
 
 # get the cluster cidr
